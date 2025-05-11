@@ -1,0 +1,32 @@
+[package]
+name = "uv"
+version = "0.1.0-devel"
+edition = "2021"
+rust-version = "1.78.0"
+authors = ["Peter Jin <peterhaijin@gmail.com>"]
+license = "MIT"
+
+[profile.dev]
+#opt-level = 0
+opt-level = 1
+debug = true
+overflow-checks = true
+panic = "abort"
+codegen-units = 256
+incremental = true
+lto = false
+
+[profile.release]
+opt-level = 3
+debug = true
+overflow-checks = true
+panic = "abort"
+codegen-units = 1
+incremental = false
+lto = false
+#lto = "thin"
+
+[dependencies]
+libc = { version = "^0.2" }
+once_cell = { version = "^1" }
+os_socketaddr = { version = "^0.2" }
