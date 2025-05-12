@@ -1,7 +1,19 @@
 extern crate libc;
+#[cfg(feature = "addrsan")]
+extern crate once_cell;
 extern crate os_socketaddr;
 
-use self::bindings::*;
+#[cfg(feature = "addrsan")]
+use crate::addrsan::{
+  _uv_addrsan_malloc as malloc,
+  _uv_addrsan_calloc as calloc,
+  _uv_addrsan_realloc as realloc,
+  _uv_addrsan_free as free,
+};
+use crate::bindings::*;
+
+#[cfg(not(feature = "addrsan"))]
+use libc::{malloc, calloc, realloc, free};
 
 use os_socketaddr::{OsSocketAddr};
 
@@ -9,16 +21,42 @@ use std::mem::{size_of};
 use std::net::{ToSocketAddrs};
 use std::os::raw::{c_char, c_int, c_void};
 use std::ptr::{null_mut};
+use std::slice::{from_raw_parts};
 use std::sync::{Arc};
 
+#[cfg(feature = "addrsan")]
+pub mod addrsan;
 pub mod bindings;
 
+pub fn init_uv() {
+  #[cfg(feature = "addrsan")]
+  {
+    crate::addrsan::init();
+  }
+}
+
 pub trait UvAllocCb {
-  fn callback_raw(handle: *mut uv_handle_t, suggested_size: usize, buf: *mut uv_buf_t);
+  fn callback_raw(handle: *mut uv_handle_t, suggested_size: usize, buf: *mut uv_buf_t) {
+    unsafe {
+      let handle = UvHandle::from_raw(handle);
+      let buf = &mut *(buf as *mut UvBuf);
+      <Self as UvAllocCb>::callback(handle, suggested_size, buf)
+    }
+  }
+
+  fn callback(handle: UvHandle, suggested_size: usize, buf: &mut UvBuf);
 }
 
 pub trait UvReadCb {
-  fn callback_raw(stream: *mut uv_stream_t, nread: isize, buf: *const uv_buf_t);
+  fn callback_raw(stream: *mut uv_stream_t, nread: isize, buf: *const uv_buf_t) {
+    unsafe {
+      let stream = UvStream::from_raw(stream);
+      let buf = &*(buf as *const UvBuf);
+      <Self as UvReadCb>::callback(stream, nread, buf)
+    }
+  }
+
+  fn callback(stream: UvStream, nread: isize, buf: &UvBuf);
 }
 
 pub trait UvWriteCb {
@@ -68,12 +106,12 @@ unsafe extern "C" fn close_trampoline<Cb: UvCloseCb>(handle: *mut uv_handle_t) {
 #[repr(transparent)]
 pub struct UvBuf {
   // TODO: buffer ownership?
-  inner: *mut uv_buf_t,
-  //inner: uv_buf_t,
+  //inner: *mut uv_buf_t,
+  inner: uv_buf_t,
 }
 
 impl UvBuf {
-  pub fn from_raw_parts(base: *mut c_char, len: usize) -> UvBuf {
+  /*pub fn from_raw_parts(base: *mut c_char, len: usize) -> UvBuf {
     let inner = unsafe {
       let ptr = libc::malloc(size_of::<uv_buf_t>()) as *mut _;
       {
@@ -85,6 +123,26 @@ impl UvBuf {
     };
     assert!(!inner.is_null());
     UvBuf{inner}
+  }*/
+
+  pub fn from_raw_parts_unchecked(base: *mut c_char, len: usize) -> UvBuf {
+    let inner = uv_buf_t{base, len};
+    UvBuf{inner}
+  }
+
+  pub fn alloc(&mut self, size: usize) {
+    unsafe {
+      self.inner.base = libc::malloc(size) as *mut _;
+      self.inner.len = size;
+    }
+  }
+
+  pub fn len(&self) -> usize {
+    self.inner.len
+  }
+
+  pub fn as_bytes(&self) -> &[u8] {
+    unsafe { from_raw_parts(self.inner.base as *mut u8, self.inner.len) }
   }
 }
 
@@ -136,13 +194,23 @@ impl UvLoop {
   }
 }
 
-pub struct UvStreamRef {
+pub struct UvHandle {
+  inner: *mut uv_handle_t,
+}
+
+impl UvHandle {
+  pub fn from_raw(inner: *mut uv_handle_t) -> UvHandle {
+    UvHandle{inner}
+  }
+}
+
+pub struct UvStream {
   inner: *mut uv_stream_t,
 }
 
-impl UvStreamRef {
-  pub fn from_raw(inner: *mut uv_stream_t) -> UvStreamRef {
-    UvStreamRef{inner}
+impl UvStream {
+  pub fn from_raw(inner: *mut uv_stream_t) -> UvStream {
+    UvStream{inner}
   }
 
   pub fn accept(&self, client: &UvTcp) -> Result<(), c_int> {
@@ -152,6 +220,30 @@ impl UvStreamRef {
     } else {
       Err(result)
     }
+  }
+
+  pub fn write<Cb: UvWriteCb>(&self, mut req: UvWrite, write_buf: &UvBuf) {
+    let result = unsafe { uv_write(
+        req.inner,
+        self.inner,
+        &write_buf.inner as *const _,
+        1,
+        write_trampoline::<Cb>,
+    ) };
+    req._forget_unchecked();
+    // TODO
+    println!("DEBUG: UvStream::write: result = {:?}", result);
+  }
+
+  pub fn shutdown<Cb: UvShutdownCb>(&self, mut req: UvShutdown) {
+    let result = unsafe { uv_shutdown(
+        req.inner,
+        self.inner,
+        shutdown_trampoline::<Cb>,
+    ) };
+    req._forget_unchecked();
+    // TODO
+    println!("DEBUG: UvStream::shutdown: result = {:?}", result);
   }
 }
 
@@ -213,7 +305,7 @@ impl UvTcp {
     let result = unsafe { uv_write(
         req.inner,
         self.as_stream_ptr(),
-        write_buf.inner as *const _,
+        &write_buf.inner as *const _,
         1,
         write_trampoline::<Cb>,
     ) };

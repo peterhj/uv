@@ -8,7 +8,8 @@ use std::os::raw::{c_char, c_int, c_uint, c_void};
 #[cfg(unix)] pub mod unix;
 
 pub type uv_errno_t = c_int;
-pub const UV_EOF: uv_errno_t = 73;
+pub const UV_EOF:           uv_errno_t = -4095;
+pub const UV_ERRNO_MAX:     uv_errno_t = -4096;
 
 pub type uv_run_mode = c_int;
 pub const UV_RUN_DEFAULT:   uv_run_mode = 0;
@@ -109,3 +110,10 @@ extern "C" { pub fn uv_signal_start(handle: *mut uv_signal_t, signal_cb: uv_sign
 
 extern "C" { pub fn uv_shutdown(req: *mut uv_shutdown_t, handle: *mut uv_stream_t, cb: uv_shutdown_cb) -> c_int; }
 extern "C" { pub fn uv_ip4_addr(ip: *const c_char, port: c_int, addr: *mut c_void) -> c_int; }
+
+pub type uv_malloc_func = unsafe extern "C" fn (usize) -> *mut c_void;
+pub type uv_realloc_func = unsafe extern "C" fn (*mut c_void, usize) -> *mut c_void;
+pub type uv_calloc_func = unsafe extern "C" fn (usize, usize) -> *mut c_void;
+pub type uv_free_func = unsafe extern "C" fn (*mut c_void);
+
+extern "C" { pub fn uv_replace_allocator(malloc_func: uv_malloc_func, realloc_func: uv_realloc_func, calloc_func: uv_calloc_func, free_func: uv_free_func) -> c_int; }
