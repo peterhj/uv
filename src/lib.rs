@@ -28,20 +28,21 @@ use std::sync::{Arc};
 pub mod addrsan;
 pub mod bindings;
 
-pub fn init_uv() {
+pub fn init_once_uv() {
   #[cfg(feature = "addrsan")]
   {
     crate::addrsan::init();
   }
+  // TODO: also verify sizes of certain struct bindings.
 }
 
 pub trait UvAllocCb {
   fn callback_raw(handle: *mut uv_handle_t, suggested_size: usize, buf: *mut uv_buf_t) {
-    unsafe {
-      let handle = UvHandle::from_raw(handle);
-      let buf = &mut *(buf as *mut UvBuf);
-      <Self as UvAllocCb>::callback(handle, suggested_size, buf)
-    }
+    let handle = UvHandle::from_raw(handle);
+    let buf = unsafe {
+      &mut *(buf as *mut UvBuf)
+    };
+    <Self as UvAllocCb>::callback(handle, suggested_size, buf)
   }
 
   fn callback(handle: UvHandle, suggested_size: usize, buf: &mut UvBuf);
@@ -49,18 +50,23 @@ pub trait UvAllocCb {
 
 pub trait UvReadCb {
   fn callback_raw(stream: *mut uv_stream_t, nread: isize, buf: *const uv_buf_t) {
-    unsafe {
-      let stream = UvStream::from_raw(stream);
-      let buf = &*(buf as *const UvBuf);
-      <Self as UvReadCb>::callback(stream, nread, buf)
-    }
+    let stream = UvStream::from_raw(stream);
+    let buf = unsafe {
+      &*(buf as *const UvBuf)
+    };
+    <Self as UvReadCb>::callback(stream, nread, buf)
   }
 
   fn callback(stream: UvStream, nread: isize, buf: &UvBuf);
 }
 
 pub trait UvWriteCb {
-  fn callback_raw(req: *mut uv_write_t, status: c_int);
+  fn callback_raw(req: *mut uv_write_t, status: c_int) {
+    let req = UvWrite::from_raw(req);
+    <Self as UvWriteCb>::callback(req, status)
+  }
+
+  fn callback(req: UvWrite, status: c_int);
 }
 
 pub trait UvConnectCb {
@@ -68,7 +74,12 @@ pub trait UvConnectCb {
 }
 
 pub trait UvShutdownCb {
-  fn callback_raw(req: *mut uv_shutdown_t, status: c_int);
+  fn callback_raw(req: *mut uv_shutdown_t, status: c_int) {
+    let req = UvShutdown::from_raw(req);
+    <Self as UvShutdownCb>::callback(req, status)
+  }
+
+  fn callback(req: UvShutdown, status: c_int);
 }
 
 pub trait UvConnectionCb {
@@ -76,7 +87,30 @@ pub trait UvConnectionCb {
 }
 
 pub trait UvCloseCb {
-  fn callback_raw(handle: *mut uv_handle_t);
+  fn callback_raw(handle: *mut uv_handle_t) {
+    let handle = UvHandle::from_raw(handle);
+    <Self as UvCloseCb>::callback(handle)
+  }
+
+  fn callback(req: UvHandle);
+}
+
+pub trait UvAsyncCb {
+  fn callback_raw(handle: *mut uv_async_t) {
+    let async_ = UvAsync::from_raw(handle);
+    <Self as UvAsyncCb>::callback(async_)
+  }
+
+  fn callback(async_: UvAsync);
+}
+
+pub trait UvSignalCb {
+  fn callback_raw(handle: *mut uv_signal_t, signum: c_int) {
+    let signal = UvSignal::from_raw(handle);
+    <Self as UvSignalCb>::callback(signal, signum)
+  }
+
+  fn callback(signal: UvSignal, signum: c_int);
 }
 
 unsafe extern "C" fn alloc_trampoline<Cb: UvAllocCb>(handle: *mut uv_handle_t, suggested_size: usize, buf: *mut uv_buf_t) {
@@ -103,56 +137,56 @@ unsafe extern "C" fn close_trampoline<Cb: UvCloseCb>(handle: *mut uv_handle_t) {
   Cb::callback_raw(handle)
 }
 
+unsafe extern "C" fn async_trampoline<Cb: UvAsyncCb>(handle: *mut uv_async_t) {
+  Cb::callback_raw(handle)
+}
+
+unsafe extern "C" fn signal_trampoline<Cb: UvSignalCb>(handle: *mut uv_signal_t, signum: c_int) {
+  Cb::callback_raw(handle, signum)
+}
+
 #[repr(transparent)]
 pub struct UvBuf {
-  // TODO: buffer ownership?
-  //inner: *mut uv_buf_t,
   inner: uv_buf_t,
 }
 
 impl UvBuf {
-  /*pub fn from_raw_parts(base: *mut c_char, len: usize) -> UvBuf {
-    let inner = unsafe {
-      let ptr = libc::malloc(size_of::<uv_buf_t>()) as *mut _;
-      {
-        let buf: &mut uv_buf_t = &mut *ptr;
-        buf.base = base;
-        buf.len = len;
-      }
-      ptr
-    };
-    assert!(!inner.is_null());
-    UvBuf{inner}
-  }*/
-
   pub fn from_raw_parts_unchecked(base: *mut c_char, len: usize) -> UvBuf {
     let inner = uv_buf_t{base, len};
     UvBuf{inner}
   }
 
-  pub fn alloc(&mut self, size: usize) {
+  pub fn replace_raw_parts_unchecked(&mut self, base: *mut c_char, len: usize) -> UvBuf {
+    let prev = UvBuf{inner: self.inner};
+    self.inner.base = base;
+    self.inner.len = len;
+    prev
+  }
+
+  /*pub fn alloc(&mut self, size: usize) {
     unsafe {
       self.inner.base = libc::malloc(size) as *mut _;
       self.inner.len = size;
     }
-  }
+  }*/
 
   pub fn len(&self) -> usize {
     self.inner.len
   }
 
-  pub fn as_bytes(&self) -> &[u8] {
-    unsafe { from_raw_parts(self.inner.base as *mut u8, self.inner.len) }
+  pub fn as_bytes(&self) -> Option<&[u8]> {
+    if self.inner.base.is_null() {
+      return None;
+    }
+    Some(unsafe { from_raw_parts(self.inner.base as *mut u8, self.inner.len) })
   }
 }
 
 pub struct UvLoop {
   inner: *mut uv_loop_t,
+  // FIXME: deprecate refct?
   refct: Option<Arc<()>>,
 }
-
-unsafe impl Send for UvLoop {}
-unsafe impl Sync for UvLoop {}
 
 impl Drop for UvLoop {
   fn drop(&mut self) {
@@ -176,7 +210,7 @@ impl UvLoop {
   }
 
   pub fn new() -> UvLoop {
-    let inner = unsafe { libc::malloc(size_of::<uv_loop_t>()) } as *mut _;
+    let inner = unsafe { malloc(size_of::<uv_loop_t>()) } as *mut _;
     let result = unsafe { uv_loop_init(inner) };
     println!("DEBUG: UvLoop::init: result = {:?}", result);
     assert_eq!(result, 0);
@@ -192,6 +226,10 @@ impl UvLoop {
     let result = unsafe { uv_run(self.inner, UV_RUN_DEFAULT) };
     println!("DEBUG: UvLoop::run: result = {:?}", result);
   }
+
+  pub fn stop(&self) {
+    unsafe { uv_stop(self.inner) };
+  }
 }
 
 pub struct UvHandle {
@@ -202,6 +240,10 @@ impl UvHandle {
   pub fn from_raw(inner: *mut uv_handle_t) -> UvHandle {
     UvHandle{inner}
   }
+
+  pub fn _free_unchecked(self) {
+    unsafe { free(self.inner as *mut c_void); }
+  }
 }
 
 pub struct UvStream {
@@ -211,6 +253,10 @@ pub struct UvStream {
 impl UvStream {
   pub fn from_raw(inner: *mut uv_stream_t) -> UvStream {
     UvStream{inner}
+  }
+
+  pub fn into_handle(self) -> UvHandle {
+    UvHandle{inner: self.inner as _}
   }
 
   pub fn accept(&self, client: &UvTcp) -> Result<(), c_int> {
@@ -253,9 +299,13 @@ pub struct UvTcp {
 
 impl UvTcp {
   pub fn new(loop_: &UvLoop) -> UvTcp {
-    let inner = unsafe { libc::malloc(size_of::<uv_tcp_t>()) } as *mut _;
+    let inner = unsafe { malloc(size_of::<uv_tcp_t>()) } as *mut _;
     unsafe { uv_tcp_init(loop_.inner, inner); }
     UvTcp{inner}
+  }
+
+  pub fn into_handle(self) -> UvHandle {
+    UvHandle{inner: self.inner as _}
   }
 
   pub fn as_ptr(&self) -> *mut uv_tcp_t {
@@ -330,14 +380,36 @@ impl UvTcp {
   }
 }
 
+pub struct UvReq {
+  inner: *mut uv_req_t,
+}
+
+impl UvReq {
+  pub fn _free_unchecked(self) {
+    unsafe { free(self.inner as *mut c_void); }
+  }
+
+  pub fn _forget_unchecked(&mut self) {
+    self.inner = null_mut();
+  }
+}
+
 pub struct UvWrite {
   inner: *mut uv_write_t,
 }
 
 impl UvWrite {
   pub fn new() -> UvWrite {
-    let inner = unsafe { libc::malloc(size_of::<uv_write_t>()) } as *mut _;
+    let inner = unsafe { malloc(size_of::<uv_write_t>()) } as *mut _;
     UvWrite{inner}
+  }
+
+  pub fn from_raw(inner: *mut uv_write_t) -> UvWrite {
+    UvWrite{inner}
+  }
+
+  pub fn into_req(self) -> UvReq {
+    UvReq{inner: self.inner as _}
   }
 
   pub fn _forget_unchecked(&mut self) {
@@ -350,20 +422,78 @@ pub struct UvShutdown {
 }
 
 impl UvShutdown {
+  pub fn new() -> UvShutdown {
+    let inner = unsafe { malloc(size_of::<uv_shutdown_t>()) } as *mut _;
+    UvShutdown{inner}
+  }
+
   pub fn from_raw(inner: *mut uv_shutdown_t) -> UvShutdown {
     UvShutdown{inner}
+  }
+
+  pub fn into_req(self) -> UvReq {
+    UvReq{inner: self.inner as _}
   }
 
   pub fn as_raw(&self) -> &uv_shutdown_t {
     unsafe { &*self.inner }
   }
 
-  pub fn new() -> UvShutdown {
-    let inner = unsafe { libc::malloc(size_of::<uv_shutdown_t>()) } as *mut _;
-    UvShutdown{inner}
-  }
-
   pub fn _forget_unchecked(&mut self) {
     self.inner = null_mut();
+  }
+}
+
+pub struct UvAsync {
+  inner: *mut uv_async_t,
+}
+
+unsafe impl Send for UvAsync {}
+unsafe impl Sync for UvAsync {}
+
+impl UvAsync {
+  pub fn new<Cb: UvAsyncCb>(loop_: &UvLoop) -> UvAsync {
+    let inner = unsafe { malloc(size_of::<uv_async_t>()) } as *mut _;
+    let _result = unsafe { uv_async_init(loop_.inner, inner, async_trampoline::<Cb>) };
+    UvAsync{inner}
+  }
+
+  pub fn from_raw(inner: *mut uv_async_t) -> UvAsync {
+    UvAsync{inner}
+  }
+
+  pub fn into_handle(self) -> UvHandle {
+    UvHandle{inner: self.inner as _}
+  }
+
+  pub fn send_(&self) /*-> Result<> */{
+    let _result = unsafe { uv_async_send(self.inner) };
+  }
+}
+
+pub struct UvSignal {
+  inner: *mut uv_signal_t,
+}
+
+impl UvSignal {
+  pub fn new(loop_: &UvLoop) -> UvSignal {
+    let inner = unsafe { malloc(size_of::<uv_signal_t>()) } as *mut _;
+    let result = unsafe { uv_signal_init(loop_.inner, inner) };
+    println!("DEBUG: UvSignal::new: result = {:?}", result);
+    UvSignal{inner}
+  }
+
+  pub fn from_raw(inner: *mut uv_signal_t) -> UvSignal {
+    UvSignal{inner}
+  }
+
+  pub fn start<Cb: UvSignalCb>(&self, signum: c_int) /*-> Result<> */{
+    let result = unsafe { uv_signal_start(self.inner, signal_trampoline::<Cb>, signum) };
+    println!("DEBUG: UvSignal::start: result = {:?}", result);
+  }
+
+  pub fn stop(&self) /*-> Result<> */{
+    let result = unsafe { uv_signal_stop(self.inner) };
+    println!("DEBUG: UvSignal::stop: result = {:?}", result);
   }
 }

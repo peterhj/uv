@@ -31,6 +31,7 @@ pub struct uv_shutdown_t {
   pub handle: *mut uv_stream_t,
   pub cb: uv_shutdown_cb,
 
+  // UV_SHUTDOWN_PRIVATE_FIELDS
   // **empty**
 
 }
@@ -52,6 +53,7 @@ pub struct uv_write_t {
   pub send_handle: *mut uv_stream_t,
   pub handle: *mut uv_stream_t,
 
+  // UV_WRITE_PRIVATE_FIELDS
   queue: uv__queue,
   write_index: c_uint,
   bufs: *mut uv_buf_t,
@@ -77,6 +79,7 @@ pub struct uv_connect_t {
   pub cb: uv_connect_cb,
   pub handle: *mut uv_stream_t,
 
+  // UV_CONNECT_PRIVATE_FIELDS
   queue: uv__queue,
 
 }
@@ -171,43 +174,8 @@ pub struct uv_tcp_t {
   queued_fds: *mut c_void,
 
 
+  // UV_TCP_PRIVATE_FIELDS
   // **empty**
-
-}
-
-#[repr(C)]
-pub struct uv_signal_t {
-
-  // UV_HANDLE_FIELDS
-  // public (handle)
-  pub data: *mut c_void,
-  // read-only (handle)
-  pub loop_: *mut uv_loop_t,
-  pub type_: uv_handle_type,
-  // private (handle)
-  close_cb: uv_close_cb,
-  handle_queue: uv__queue,
-  reserved: [*mut c_void; 4],
-  // private (handle, unix)
-  next_closing: *mut uv_handle_t,
-  flags: c_uint,
-
-
-  // UV_STREAM_FIELDS
-  // public (stream)
-  pub write_queue_size: usize,
-  pub alloc_cb: uv_alloc_cb,
-  pub read_cb: uv_read_cb,
-  // private (stream, unix)
-  connect_req: *mut uv_connect_t,
-  shutdown_req: *mut uv_shutdown_t,
-  io_watcher: uv__io_t,
-  write_queue: uv__queue,
-  write_completed_queue: uv__queue,
-  connection_cb: uv_connection_cb,
-  delayed_error: c_int,
-  accepted_fd: c_int,
-  queued_fds: *mut c_void,
 
 }
 
@@ -229,9 +197,22 @@ pub struct uv_async_t {
   flags: c_uint,
 
 
+  // UV_ASYNC_PRIVATE_FIELDS
   async_cb: uv_async_cb,
   queue: uv__queue,
   pending: c_int,
+
+}
+
+#[repr(C)]
+pub struct uv_signal_t {
+  pub signal_cb: uv_signal_cb,
+  pub signum: c_int,
+
+  // UV_SIGNAL_PRIVATE_FIELDS
+  tree_entry: _rb_tree_entry,
+  caught_signals: c_uint,
+  dispatched_signals: c_uint,
 
 }
 
@@ -248,6 +229,7 @@ pub struct uv_loop_t {
   pub internal_fields: *mut c_void,
   pub stop_flag: c_uint,
 
+  // UV_LOOP_PRIVATE_FIELDS
   pub flags: usize,
   pub backend_fd: i32,
   pub pending_queue: uv__queue,
@@ -276,6 +258,7 @@ pub struct uv_loop_t {
   pub child_watcher: uv_signal_t,
   pub emfile_fd: i32,
 
+  // UV_PLATFORM_LOOP_FIELDS
   // **empty**
 
 
@@ -284,5 +267,13 @@ pub struct uv_loop_t {
 #[repr(C)]
 pub struct _timer_heap {
   pub min: *mut c_void,
-  pub nelts: u32,
+  pub nelts: c_uint,
+}
+
+#[repr(C)]
+pub struct _rb_tree_entry {
+  pub rbe_left: *mut uv_signal_t,
+  pub rbe_right: *mut uv_signal_t,
+  pub rbe_parent: *mut uv_signal_t,
+  pub rbe_color: c_int,
 }

@@ -70,6 +70,7 @@ pub struct uv__io_t {
   fd: c_int,
 }
 
+#[derive(Clone, Copy, Debug)]
 #[repr(C)]
 pub struct uv_buf_t {
   pub base: *mut c_char,
@@ -94,6 +95,11 @@ extern "C" { pub fn uv_default_loop() -> *mut uv_loop_t; }
 extern "C" { pub fn uv_loop_init(loop_: *mut uv_loop_t) -> c_int; }
 extern "C" { pub fn uv_loop_close(loop_: *mut uv_loop_t) -> c_int; }
 extern "C" { pub fn uv_run(loop_: *mut uv_loop_t, mode: uv_run_mode) -> c_int; }
+extern "C" { pub fn uv_stop(loop_: *mut uv_loop_t); }
+
+extern "C" { pub fn uv_ref(handle: *mut uv_handle_t); }
+extern "C" { pub fn uv_unref(handle: *mut uv_handle_t); }
+extern "C" { pub fn uv_has_ref(handle: *const uv_handle_t) -> c_int; }
 
 extern "C" { pub fn uv_close(handle: *mut uv_handle_t, close_cb: uv_close_cb); }
 
@@ -105,8 +111,12 @@ extern "C" { pub fn uv_write(req: *mut uv_write_t, handle: *mut uv_stream_t, buf
 extern "C" { pub fn uv_tcp_init(loop_: *mut uv_loop_t, handle: *mut uv_tcp_t) -> c_int; }
 extern "C" { pub fn uv_tcp_bind(handle: *mut uv_tcp_t, addr: *const c_void, flags: c_uint) -> c_int; }
 
+extern "C" { pub fn uv_async_init(loop_: *mut uv_loop_t, async_: *mut uv_async_t, async_cb: uv_async_cb) -> c_int; }
+extern "C" { pub fn uv_async_send(async_: *mut uv_async_t) -> c_int; }
+
 extern "C" { pub fn uv_signal_init(loop_: *mut uv_loop_t, handle: *mut uv_signal_t) -> c_int; }
 extern "C" { pub fn uv_signal_start(handle: *mut uv_signal_t, signal_cb: uv_signal_cb, signum: c_int) -> c_int; }
+extern "C" { pub fn uv_signal_stop(handle: *mut uv_signal_t) -> c_int; }
 
 extern "C" { pub fn uv_shutdown(req: *mut uv_shutdown_t, handle: *mut uv_stream_t, cb: uv_shutdown_cb) -> c_int; }
 extern "C" { pub fn uv_ip4_addr(ip: *const c_char, port: c_int, addr: *mut c_void) -> c_int; }

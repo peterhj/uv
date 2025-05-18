@@ -88,17 +88,17 @@ pub unsafe extern "C" fn _uv_addrsan_realloc(ptr: *mut c_void, size: usize) -> *
   let ptr_buf = ptr as *mut u8;
   {
     let mut state = ADDRSAN_STATE.lock().unwrap();
-    let index_old_ctr = match state.index.get(&ptr_val) {
+    let index_old_ctr = match state.index.remove(&ptr_val) {
       None => {
         panic!("bug: ptr = 0x{:016x}", ptr_val);
       }
-      Some(&ctr) => ctr
+      Some(ctr) => ctr
     };
-    match state.cache.get(&index_old_ctr) {
+    match state.cache.remove(&index_old_ctr) {
       None => {
         panic!("bug");
       }
-      Some(&(cache_ptr_val, cache_size)) => {
+      Some((cache_ptr_val, cache_size)) => {
         assert_eq!(ptr_val, cache_ptr_val);
         let cache_ext_size = (((cache_size + 8 - 1) / 8) + 1) * 8;
         let ext_ptr = ptr_buf.offset((cache_ext_size - 8) as _);
@@ -113,29 +113,31 @@ pub unsafe extern "C" fn _uv_addrsan_realloc(ptr: *mut c_void, size: usize) -> *
         );
       }
     }
-    state.index.remove(&ptr_val);
-    state.cache.remove(&index_old_ctr);
   }
   free(ptr);
   new_ptr
 }
 
 pub unsafe extern "C" fn _uv_addrsan_free(ptr: *mut c_void) {
+  if ptr.is_null() {
+    println!("_uv_addrsan_free: warning: null ptr");
+    return;
+  }
   let ptr_val = ptr as usize;
   let ptr_buf = ptr as *mut u8;
   {
     let mut state = ADDRSAN_STATE.lock().unwrap();
-    let index_ctr = match state.index.get(&ptr_val) {
+    let index_ctr = match state.index.remove(&ptr_val) {
       None => {
-        panic!("bug");
+        panic!("_uv_addrsan_free: bug: double free: ptr = 0x{:016x}", ptr_val);
       }
-      Some(&ctr) => ctr
+      Some(ctr) => ctr
     };
-    match state.cache.get(&index_ctr) {
+    match state.cache.remove(&index_ctr) {
       None => {
         panic!("bug");
       }
-      Some(&(cache_ptr_val, cache_size)) => {
+      Some((cache_ptr_val, cache_size)) => {
         assert_eq!(ptr_val, cache_ptr_val);
         let cache_ext_size = (((cache_size + 8 - 1) / 8) + 1) * 8;
         let ext_ptr = ptr_buf.offset((cache_ext_size - 8) as _);
@@ -144,8 +146,6 @@ pub unsafe extern "C" fn _uv_addrsan_free(ptr: *mut c_void) {
         assert_eq!(ctr, index_ctr);
       }
     }
-    state.index.remove(&ptr_val);
-    state.cache.remove(&index_ctr);
   }
   free(ptr);
 }
