@@ -2,6 +2,8 @@ extern crate libc;
 #[cfg(feature = "addrsan")]
 extern crate once_cell;
 extern crate os_socketaddr;
+#[cfg(feature = "addrsan")]
+extern crate parking_lot;
 
 #[cfg(feature = "addrsan")]
 use crate::addrsan::{

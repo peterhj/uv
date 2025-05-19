@@ -28,12 +28,13 @@ lto = false
 
 [features]
 default = ["addrsan"]
-addrsan = ["dep:once_cell"]
+addrsan = ["dep:once_cell", "dep:parking_lot"]
 
 [dependencies]
 libc = { version = "^0.2" }
 once_cell = { version = "^1", optional = true }
 os_socketaddr = { version = "^0.2" }
+parking_lot = { version = "^0.12", optional = true }
 
 [dev-dependencies]
 once_cell = { version = "^1" }

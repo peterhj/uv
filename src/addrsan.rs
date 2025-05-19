@@ -2,11 +2,12 @@ use crate::bindings::*;
 
 use libc::{malloc, free};
 use once_cell::sync::{Lazy};
+use parking_lot::{Mutex};
 
 use std::cmp::{min};
 use std::collections::{HashMap};
 use std::os::raw::{c_void};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc};
 
 static ADDRSAN_STATE: Lazy<Arc<Mutex<_AddrsanState>>> = Lazy::new(|| Arc::new(Mutex::new(_AddrsanState::default())));
 
@@ -44,7 +45,7 @@ pub unsafe extern "C" fn _uv_addrsan_malloc(size: usize) -> *mut c_void {
   let ptr_val = ptr as usize;
   let ptr_buf = ptr as *mut u8;
   {
-    let mut state = ADDRSAN_STATE.lock().unwrap();
+    let mut state = ADDRSAN_STATE.lock();
     let ctr = state.fresh();
     assert!(state.cache.insert(ctr, (ptr_val, size)).is_none());
     assert!(state.index.insert(ptr_val, ctr).is_none());
@@ -67,7 +68,7 @@ pub unsafe extern "C" fn _uv_addrsan_calloc(nelem: usize, elemsz: usize) -> *mut
     std::ptr::write(ptr_buf.offset(off), 0);
   }
   {
-    let mut state = ADDRSAN_STATE.lock().unwrap();
+    let mut state = ADDRSAN_STATE.lock();
     let ctr = state.fresh();
     assert!(state.cache.insert(ctr, (ptr_val, size)).is_none());
     assert!(state.index.insert(ptr_val, ctr).is_none());
@@ -87,7 +88,7 @@ pub unsafe extern "C" fn _uv_addrsan_realloc(ptr: *mut c_void, size: usize) -> *
   let ptr_val = ptr as usize;
   let ptr_buf = ptr as *mut u8;
   {
-    let mut state = ADDRSAN_STATE.lock().unwrap();
+    let mut state = ADDRSAN_STATE.lock();
     let index_old_ctr = match state.index.remove(&ptr_val) {
       None => {
         panic!("bug: ptr = 0x{:016x}", ptr_val);
@@ -126,7 +127,7 @@ pub unsafe extern "C" fn _uv_addrsan_free(ptr: *mut c_void) {
   let ptr_val = ptr as usize;
   let ptr_buf = ptr as *mut u8;
   {
-    let mut state = ADDRSAN_STATE.lock().unwrap();
+    let mut state = ADDRSAN_STATE.lock();
     let index_ctr = match state.index.remove(&ptr_val) {
       None => {
         panic!("_uv_addrsan_free: bug: double free: ptr = 0x{:016x}", ptr_val);
