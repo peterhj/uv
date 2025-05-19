@@ -1,5 +1,6 @@
 #![allow(unused_variables)]
 
+extern crate libc;
 //extern crate once_cell;
 extern crate uv;
 
@@ -8,8 +9,10 @@ use uv::*;
 use uv::bindings::*;
 
 use std::cell::{RefCell};
-use std::collections::{HashSet};
-use std::os::raw::{c_int};
+use std::cmp::{Ordering};
+use std::collections::{BTreeSet, HashSet};
+use std::ptr::{null_mut};
+use std::os::raw::{c_int, c_void};
 
 //static RESPONSE: &'static [u8] = b"Hello, world!\n";
 
@@ -17,9 +20,80 @@ thread_local! {
   static BACKEND: Backend = Backend::new();
 }
 
+#[repr(C)]
+pub struct BackingBuf {
+  pub ptr: *mut u8,
+  pub len: usize,
+}
+
+impl BackingBuf {
+  pub fn maybe_from_raw_parts_unchecked(ptr: *mut u8, len: usize) -> Option<BackingBuf> {
+    if ptr.is_null() {
+      return None;
+    }
+    if len <= 0 {
+      return None;
+    }
+    Some(BackingBuf{ptr, len})
+  }
+
+  pub fn from_raw_parts_unchecked(ptr: *mut u8, len: usize) -> BackingBuf {
+    assert!(!ptr.is_null());
+    assert!(len > 0);
+    BackingBuf{ptr, len}
+  }
+
+  pub fn new_uninit(len: usize) -> BackingBuf {
+    assert!(len > 0);
+    let ptr = unsafe { libc::malloc(len) as *mut u8 };
+    assert!(!ptr.is_null());
+    BackingBuf{ptr, len}
+  }
+
+  pub fn free_unchecked(&mut self) {
+    if self.ptr.is_null() {
+      return;
+    }
+    unsafe { libc::free(self.ptr as *mut c_void); }
+    self.ptr = null_mut();
+  }
+}
+
+impl PartialEq for BackingBuf {
+  fn eq(&self, other: &BackingBuf) -> bool {
+    let e = self.ptr == other.ptr;
+    if e {
+      assert_eq!(self.len, other.len);
+    }
+    e
+  }
+}
+
+impl Eq for BackingBuf {}
+
+impl PartialOrd for BackingBuf {
+  fn partial_cmp(&self, other: &BackingBuf) -> Option<Ordering> {
+    Some(self.cmp(other))
+  }
+}
+
+impl Ord for BackingBuf {
+  fn cmp(&self, other: &BackingBuf) -> Ordering {
+    let ord = self.ptr.cmp(&other.ptr);
+    match ord {
+      Ordering::Equal => {
+        assert_eq!(self.len, other.len);
+      }
+      _ => {}
+    }
+    ord
+  }
+}
+
 #[derive(Default)]
 pub struct Store {
-  buf: HashSet<Box<[u8]>>,
+  buf: BTreeSet<BackingBuf>,
+  //buf: HashSet<BackingBuf>,
 }
 
 pub struct Backend {
@@ -65,16 +139,24 @@ impl UvAllocCb for Backend {
     println!("DEBUG: Backend: alloc callback: size = {} buf.len = {:?}", suggested_size, buf.as_bytes().map(|b| b.len()));
     BACKEND.with(|backend| {
       let mut store = backend.store.borrow_mut();
+      /*
       let mut backing_buf: Vec<u8> = Vec::with_capacity(suggested_size);
       backing_buf.resize(suggested_size, 0);
       let mut backing_buf: Box<[u8]> = backing_buf.into();
       let _ = buf.replace_raw_parts_unchecked(backing_buf.as_mut_ptr() as _, backing_buf.len());
+      */
+      println!("DEBUG: Backend: alloc callback: alloc backing buf...");
+      let backing_buf = BackingBuf::new_uninit(suggested_size);
+      let _ = buf.replace_raw_parts_unchecked(backing_buf.ptr as _, backing_buf.len);
+      if let Some(_) = store.buf.replace(backing_buf) {
+        println!("DEBUG: Backend: alloc callback: warning: backing buf was already stored!");
+      }
     });
   }
 }
 
 impl UvReadCb for Backend {
-  fn callback(client: UvStream, nread: isize, buf: &UvBuf) {
+  fn callback(client: UvStream, nread: isize, buf: &mut UvBuf) {
     println!("DEBUG: Backend: read callback: nread = {} buf.len = {}", nread, buf.len());
     if nread < 0 {
       let errno = nread as c_int;
@@ -101,8 +183,26 @@ impl UvReadCb for Backend {
 }
 
 impl UvWriteCb for Backend {
-  fn callback(req: UvWrite, status: c_int) {
+  fn callback(mut req: UvWrite, status: c_int) {
     println!("DEBUG: Backend: write callback: status = {}", status);
+    if let Some(bufs) = req._inner_mut_bufs_unchecked() {
+      println!("DEBUG: Backend: write callback: found req bufs: bufs.len = {}", bufs.len());
+      for buf in bufs.iter_mut() {
+        let (backing_ptr, backing_len) = buf.take_raw_parts();
+        if let Some(mut backing_buf) = BackingBuf::maybe_from_raw_parts_unchecked(backing_ptr as _, backing_len) {
+          BACKEND.with(|backend| {
+            let mut store = backend.store.borrow_mut();
+            if !store.buf.remove(&backing_buf) {
+              println!("DEBUG: Backend: write callback: warning: backing buf was NOT in store!");
+            }
+            println!("DEBUG: Backend: write callback: free backing buf...");
+            backing_buf.free_unchecked();
+          });
+        }
+      }
+    } else {
+      println!("DEBUG: Backend: write callback: warning: no req bufs found!");
+    }
     req.into_req()._free_unchecked();
   }
 }

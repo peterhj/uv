@@ -39,24 +39,24 @@ UV_LOOP_PRIVATE_FIELDS = f"""
 
 UV_REQ_FIELDS = """
   // UV_REQ_FIELDS
-  // public (req)
+  // public
   pub data: *mut c_void,
-  // read-only (req)
+  // read-only
   pub type_: uv_req_type,
-  // private (req)
+  // private
   reserved: [*mut c_void; 6],
-  // private (req, unix)
+  // private (unix)
   // **empty**
 """
 
 UV_WRITE_PRIVATE_FIELDS = """
   // UV_WRITE_PRIVATE_FIELDS
-  queue: uv__queue,
-  write_index: c_uint,
-  bufs: *mut uv_buf_t,
-  nbufs: c_uint,
-  error: c_int,
-  bufsml: [uv_buf_t; 4],
+  pub queue: uv__queue,
+  pub write_index: c_uint,
+  pub bufs: *mut uv_buf_t,
+  pub nbufs: c_uint,
+  pub error: c_int,
+  pub bufsml: [uv_buf_t; 4],
 """
 
 UV_CONNECT_PRIVATE_FIELDS = """
@@ -71,27 +71,27 @@ UV_SHUTDOWN_PRIVATE_FIELDS = """
 
 UV_HANDLE_FIELDS = """
   // UV_HANDLE_FIELDS
-  // public (handle)
+  // public
   pub data: *mut c_void,
-  // read-only (handle)
+  // read-only
   pub loop_: *mut uv_loop_t,
   pub type_: uv_handle_type,
-  // private (handle)
+  // private
   close_cb: uv_close_cb,
   handle_queue: uv__queue,
   reserved: [*mut c_void; 4],
-  // private (handle, unix)
+  // private (unix)
   next_closing: *mut uv_handle_t,
   flags: c_uint,
 """
 
 UV_STREAM_FIELDS = """
   // UV_STREAM_FIELDS
-  // public (stream)
+  // public
   pub write_queue_size: usize,
   pub alloc_cb: uv_alloc_cb,
   pub read_cb: uv_read_cb,
-  // private (stream, unix)
+  // private (unix)
   connect_req: *mut uv_connect_t,
   shutdown_req: *mut uv_shutdown_t,
   io_watcher: uv__io_t,

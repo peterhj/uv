@@ -21,7 +21,7 @@ use std::mem::{size_of};
 use std::net::{ToSocketAddrs};
 use std::os::raw::{c_char, c_int, c_void};
 use std::ptr::{null_mut};
-use std::slice::{from_raw_parts};
+use std::slice::{from_raw_parts, from_raw_parts_mut};
 use std::sync::{Arc};
 
 #[cfg(feature = "addrsan")]
@@ -39,25 +39,38 @@ pub fn init_once_uv() {
 pub trait UvAllocCb {
   fn callback_raw(handle: *mut uv_handle_t, suggested_size: usize, buf: *mut uv_buf_t) {
     let handle = UvHandle::from_raw(handle);
-    let buf = unsafe {
-      &mut *(buf as *mut UvBuf)
-    };
+    let buf = unsafe { &mut *(buf as *mut UvBuf) };
     <Self as UvAllocCb>::callback(handle, suggested_size, buf)
   }
 
   fn callback(handle: UvHandle, suggested_size: usize, buf: &mut UvBuf);
 }
 
+// NB: in the original FFI, `uv_read_cb` assumes an invariant that the
+// buffer memory can be freed inside the callback, even though the buffer is
+// provided to the callback via a const pointer...
+//
+// But, suppose the buffer is immediately fed as input to `uv_write`; then,
+// the buffer is still being used and cannot yet be freed. Specifically, copies
+// of the write buffers are stored in the `uv_write_t` request itself, though
+// the buffer memory itself is not copied; c.f. `uv_write2`.
+//
+// Except, the write request buffers are freed _before_ the write callback;
+// c.f. `uv__write_callbacks`.
+//
+// So, in these bindings, we apply the following patches:
+//
+// 1. upgrade `uv_read_cb` argument from const to mut pointer
+// 2. free `uv_write_t` buffers _after_ call to `uv_write_cb`
+
 pub trait UvReadCb {
-  fn callback_raw(stream: *mut uv_stream_t, nread: isize, buf: *const uv_buf_t) {
+  fn callback_raw(stream: *mut uv_stream_t, nread: isize, buf: *mut uv_buf_t) {
     let stream = UvStream::from_raw(stream);
-    let buf = unsafe {
-      &*(buf as *const UvBuf)
-    };
+    let buf = unsafe { &mut *(buf as *mut UvBuf) };
     <Self as UvReadCb>::callback(stream, nread, buf)
   }
 
-  fn callback(stream: UvStream, nread: isize, buf: &UvBuf);
+  fn callback(stream: UvStream, nread: isize, buf: &mut UvBuf);
 }
 
 pub trait UvWriteCb {
@@ -117,7 +130,7 @@ unsafe extern "C" fn alloc_trampoline<Cb: UvAllocCb>(handle: *mut uv_handle_t, s
   Cb::callback_raw(handle, suggested_size, buf)
 }
 
-unsafe extern "C" fn read_trampoline<Cb: UvReadCb>(stream: *mut uv_stream_t, nread: isize, buf: *const uv_buf_t) {
+unsafe extern "C" fn read_trampoline<Cb: UvReadCb>(stream: *mut uv_stream_t, nread: isize, buf: *mut uv_buf_t) {
   Cb::callback_raw(stream, nread, buf)
 }
 
@@ -147,7 +160,7 @@ unsafe extern "C" fn signal_trampoline<Cb: UvSignalCb>(handle: *mut uv_signal_t,
 
 #[repr(transparent)]
 pub struct UvBuf {
-  inner: uv_buf_t,
+  pub inner: uv_buf_t,
 }
 
 impl UvBuf {
@@ -178,7 +191,17 @@ impl UvBuf {
     if self.inner.base.is_null() {
       return None;
     }
+    if self.inner.len <= 0 {
+      return None;
+    }
     Some(unsafe { from_raw_parts(self.inner.base as *mut u8, self.inner.len) })
+  }
+
+  pub fn take_raw_parts(&mut self) -> (*mut c_char, usize) {
+    let inner = self.inner;
+    self.inner.base = null_mut();
+    self.inner.len = 0;
+    (inner.base, inner.len)
   }
 }
 
@@ -414,6 +437,36 @@ impl UvWrite {
 
   pub fn _forget_unchecked(&mut self) {
     self.inner = null_mut();
+  }
+
+  #[inline]
+  pub fn _inner_bufs_ptr(&self) -> *mut uv_buf_t {
+    assert!(!self.inner.is_null());
+    unsafe {
+      let inner: &uv_write_t = &*self.inner;
+      inner.bufs
+    }
+  }
+
+  #[inline]
+  pub fn _inner_bufs_len(&self) -> usize {
+    assert!(!self.inner.is_null());
+    unsafe {
+      let inner: &uv_write_t = &*self.inner;
+      inner.nbufs as _
+    }
+  }
+
+  pub fn _inner_mut_bufs_unchecked(&mut self) -> Option<&mut [UvBuf]> {
+    let ptr = self._inner_bufs_ptr();
+    let len = self._inner_bufs_len();
+    if ptr.is_null() {
+      return None;
+    }
+    if len <= 0 {
+      return None;
+    }
+    Some(unsafe { from_raw_parts_mut(ptr as *mut _, len) })
   }
 }
 

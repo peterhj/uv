@@ -78,7 +78,7 @@ pub struct uv_buf_t {
 }
 
 pub type uv_alloc_cb = unsafe extern "C" fn (handle: *mut uv_handle_t, suggested_size: usize, buf: *mut uv_buf_t);
-pub type uv_read_cb = unsafe extern "C" fn (stream: *mut uv_stream_t, nread: isize, buf: *const uv_buf_t);
+pub type uv_read_cb = unsafe extern "C" fn (stream: *mut uv_stream_t, nread: isize, buf: *mut uv_buf_t);
 pub type uv_write_cb = unsafe extern "C" fn (req: *mut uv_write_t, status: c_int);
 pub type uv_connect_cb = unsafe extern "C" fn (req: *mut uv_connect_t, status: c_int);
 pub type uv_shutdown_cb = unsafe extern "C" fn (req: *mut uv_shutdown_t, status: c_int);
