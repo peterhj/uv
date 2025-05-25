@@ -29,6 +29,7 @@ use std::sync::{Arc};
 #[cfg(feature = "addrsan")]
 pub mod addrsan;
 pub mod bindings;
+pub mod extras;
 
 pub fn init_once_uv() {
   #[cfg(feature = "addrsan")]
