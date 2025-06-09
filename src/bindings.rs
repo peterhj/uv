@@ -11,6 +11,12 @@ pub type uv_errno_t = c_int;
 pub const UV_EOF:           uv_errno_t = -4095;
 pub const UV_ERRNO_MAX:     uv_errno_t = -4096;
 
+// TODO: use libc platform-specific constants.
+#[cfg(target_os = "macos")]
+pub const UV_ECONNRESET:    uv_errno_t = -54;
+#[cfg(target_os = "macos")]
+pub const UV_ENOTCONN:      uv_errno_t = -57;
+
 pub type uv_run_mode = c_int;
 pub const UV_RUN_DEFAULT:   uv_run_mode = 0;
 pub const UV_RUN_ONCE:      uv_run_mode = 1;
